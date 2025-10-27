@@ -2,6 +2,9 @@
 
 Descripción de todos los servicios usados para alojar mi web en AWS usando una distribución de CloudFront, un dominio de Route53 y certificados de ACM
 
+<img width="848" height="307" alt="image" src="https://github.com/user-attachments/assets/810cf34b-e00d-44ab-88a8-2d820ff3b75b" />
+
+
 Description of all the services used to host my web in AWS using a CloudFront Distribution, a Route53 domain and ACM certificates
 
 Here's a comprehensive summary of your complete infrastructure setup for juan-carlos-pascual-garcia.com:
