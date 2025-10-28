@@ -153,7 +153,7 @@ Resources:
       Type: A
       AliasTarget:
         DNSName: !GetAtt CloudFrontDistribution.DomainName
-        HostedZoneId: Z2FDTNDATAQYW2  # CloudFront hosted zone ID (global)
+        HostedZoneId: Z2FDTNDATAQYGT  # CloudFront hosted zone ID (global)
         EvaluateTargetHealth: false
 
   # Route 53 AAAA Record for root domain (IPv6)
@@ -165,7 +165,7 @@ Resources:
       Type: AAAA
       AliasTarget:
         DNSName: !GetAtt CloudFrontDistribution.DomainName
-        HostedZoneId: Z2FDTNDATAQYW2  # CloudFront hosted zone ID (global)
+        HostedZoneId: Z2FDTNDATAQYGT  # CloudFront hosted zone ID (global)
         EvaluateTargetHealth: false
 
   # Route 53 CNAME Record for www subdomain
@@ -233,3 +233,4 @@ Outputs:
     Value: !GetAtt OriginAccessControl.Id
     Export:
       Name: !Sub "${AWS::StackName}-OAC-Id"
+
