@@ -1,0 +1,235 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Complete infrastructure for juan-carlos-pascual-garcia.com - S3, CloudFront with OAC, Route 53, and ACM Certificate'
+
+Parameters:
+  DomainName:
+    Type: String
+    Default: juan-carlos-pascual-garcia.com
+    Description: The domain name for the website
+  
+  BucketName:
+    Type: String
+    Default: juan-carlos-pascual-garcia.com
+    Description: Name of the S3 bucket (should match domain name)
+
+Resources:
+  # S3 Bucket for website content
+  WebsiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      Tags:
+        - Key: Name
+          Value: !Sub "${DomainName}-website-bucket"
+        - Key: Purpose
+          Value: Static Website Hosting
+
+  # Route 53 Hosted Zone
+  HostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: !Ref DomainName
+      HostedZoneConfig:
+        Comment: !Sub "Hosted zone for ${DomainName}"
+      HostedZoneTags:
+        - Key: Name
+          Value: !Sub "${DomainName}-hosted-zone"
+
+  # ACM Certificate (must be in us-east-1 for CloudFront)
+  SSLCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref DomainName
+      SubjectAlternativeNames:
+        - !Sub "www.${DomainName}"
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref DomainName
+          HostedZoneId: !Ref HostedZone
+        - DomainName: !Sub "www.${DomainName}"
+          HostedZoneId: !Ref HostedZone
+      Tags:
+        - Key: Name
+          Value: !Sub "${DomainName}-ssl-certificate"
+
+  # Origin Access Control for CloudFront
+  OriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${DomainName}-oac"
+        Description: !Sub "Origin Access Control for ${DomainName}"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # CloudFront Distribution
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Aliases:
+          - !Ref DomainName
+          - !Sub "www.${DomainName}"
+        DefaultCacheBehavior:
+          TargetOriginId: !Sub "${BucketName}-origin"
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # Managed-CachingOptimized
+          OriginRequestPolicyId: 88a5eaf4-2fd4-4709-b370-b4c650ea3fcf  # Managed-CORS-S3Origin
+        DefaultRootObject: index.html
+        Enabled: true
+        HttpVersion: http2
+        IPV6Enabled: true
+        Origins:
+          - Id: !Sub "${BucketName}-origin"
+            DomainName: !GetAtt WebsiteBucket.RegionalDomainName
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+            OriginAccessControlId: !GetAtt OriginAccessControl.Id
+        PriceClass: PriceClass_100  # Use only North America and Europe edge locations
+        ViewerCertificate:
+          AcmCertificateArn: !Ref SSLCertificate
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 300
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 300
+      Tags:
+        - Key: Name
+          Value: !Sub "${DomainName}-cloudfront-distribution"
+
+  # S3 Bucket Policy for CloudFront OAC
+  BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebsiteBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontServicePrincipalReadOnly
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${WebsiteBucket}/*"
+            Condition:
+              StringEquals:
+                "AWS:SourceArn": !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}"
+
+  # Route 53 A Record for root domain
+  DNSRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZone
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt CloudFrontDistribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2  # CloudFront hosted zone ID (global)
+        EvaluateTargetHealth: false
+
+  # Route 53 AAAA Record for root domain (IPv6)
+  DNSRecordIPv6:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZone
+      Name: !Ref DomainName
+      Type: AAAA
+      AliasTarget:
+        DNSName: !GetAtt CloudFrontDistribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2  # CloudFront hosted zone ID (global)
+        EvaluateTargetHealth: false
+
+  # Route 53 CNAME Record for www subdomain
+  WWWRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZone
+      Name: !Sub "www.${DomainName}"
+      Type: CNAME
+      TTL: 300
+      ResourceRecords:
+        - !Ref DomainName
+
+Outputs:
+  WebsiteBucketName:
+    Description: Name of the S3 bucket for website content
+    Value: !Ref WebsiteBucket
+    Export:
+      Name: !Sub "${AWS::StackName}-WebsiteBucket"
+
+  WebsiteBucketArn:
+    Description: ARN of the S3 bucket
+    Value: !GetAtt WebsiteBucket.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-WebsiteBucketArn"
+
+  CloudFrontDistributionId:
+    Description: CloudFront Distribution ID
+    Value: !Ref CloudFrontDistribution
+    Export:
+      Name: !Sub "${AWS::StackName}-CloudFrontDistributionId"
+
+  CloudFrontDistributionDomainName:
+    Description: CloudFront Distribution Domain Name
+    Value: !GetAtt CloudFrontDistribution.DomainName
+    Export:
+      Name: !Sub "${AWS::StackName}-CloudFrontDomainName"
+
+  HostedZoneId:
+    Description: Route 53 Hosted Zone ID
+    Value: !Ref HostedZone
+    Export:
+      Name: !Sub "${AWS::StackName}-HostedZoneId"
+
+  HostedZoneNameServers:
+    Description: Route 53 Hosted Zone Name Servers
+    Value: !Join [", ", !GetAtt HostedZone.NameServers]
+    Export:
+      Name: !Sub "${AWS::StackName}-NameServers"
+
+  SSLCertificateArn:
+    Description: ACM Certificate ARN
+    Value: !Ref SSLCertificate
+    Export:
+      Name: !Sub "${AWS::StackName}-SSLCertificateArn"
+
+  WebsiteURL:
+    Description: Website URL
+    Value: !Sub "https://${DomainName}"
+    Export:
+      Name: !Sub "${AWS::StackName}-WebsiteURL"
+
+  OriginAccessControlId:
+    Description: CloudFront Origin Access Control ID
+    Value: !GetAtt OriginAccessControl.Id
+    Export:
+      Name: !Sub "${AWS::StackName}-OAC-Id"
